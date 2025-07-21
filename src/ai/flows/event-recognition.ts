@@ -26,6 +26,7 @@ const EventRecognitionOutputSchema = z.object({
   event: z.object({
       title: z.string().describe('A concise title for the event.'),
       date: z.string().describe('The full date and time of the event in ISO 8601 format.'),
+      timeProvided: z.boolean().describe('Whether a specific time for the event was mentioned in the entry.')
     })
     .optional()
     .describe('The details of the event, if one was found.'),
@@ -45,7 +46,8 @@ The user is writing in their journal. Your task is to determine if they mention 
 The current date is {{{currentDate}}}. Use this to resolve relative dates (e.g., "tomorrow", "next Friday").
 
 If you find a future event, set hasEvent to true and provide the event title and its full date and time in ISO 8601 format.
-IMPORTANT: If a date is mentioned but no specific time is provided, you MUST default the time to 9:00 AM on that day. Do not infer any other time.
+It is very important that you also determine if a specific time (e.g., "3 PM", "at noon") was mentioned in the entry. Set the 'timeProvided' field to true if a time was mentioned, and false otherwise.
+
 If there is no mention of a specific future event, or the event is in the past, set hasEvent to false.
 
 Do not create events for vague plans, past events, or general statements. For example, "I should work out more" is not an event. "My birthday was last week" is a past event. "I have a dentist appointment tomorrow at 3 PM" is a valid future event.
@@ -62,6 +64,15 @@ const eventRecognitionFlow = ai.defineFlow(
   },
   async input => {
     const {output} = await prompt(input);
+    
+    if (output?.event && output.event.timeProvided === false) {
+      // AI detected an event but no time was provided by the user.
+      // Force the time to 9:00 AM local time to prevent hallucination.
+      const eventDate = new Date(output.event.date);
+      eventDate.setHours(9, 0, 0, 0);
+      output.event.date = eventDate.toISOString();
+    }
+    
     return output!;
   }
 );
