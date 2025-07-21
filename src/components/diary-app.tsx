@@ -1,48 +1,79 @@
 "use client";
 
 import * as React from "react";
-import { DiaryEntry } from "@/types";
+import { DiaryEntry, AppEvent } from "@/types";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Plus, Search, Sparkles, Download, Upload } from "lucide-react";
+import { Plus, Search, Sparkles, Download, Upload, CalendarClock, Trash2, Bell, BellOff, Calendar as CalendarIcon } from "lucide-react";
 import EntryCard from "./entry-card";
 import NewEntryDialog from "./new-entry-dialog";
 import MoodRetrievalDialog from "./mood-retrieval-dialog";
 import { LeafIcon } from "./icons";
-import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarHeader, SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarHeader, SidebarInset, SidebarProvider, SidebarSeparator } from "@/components/ui/sidebar";
 import { useToast } from "@/hooks/use-toast";
+import { recognizeEvent, EventRecognitionOutput } from "@/ai/flows/event-recognition";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { format } from "date-fns";
 
 interface DiaryAppProps {
   entries: DiaryEntry[];
   onUpdateEntries: (entries: DiaryEntry[]) => void;
+  events: AppEvent[];
+  onUpdateEvents: (events: AppEvent[]) => void;
   encryptionKey: CryptoKey;
 }
 
-export default function DiaryApp({ entries, onUpdateEntries, encryptionKey }: DiaryAppProps) {
+export default function DiaryApp({ entries, onUpdateEntries, events, onUpdateEvents, encryptionKey }: DiaryAppProps) {
   const [searchQuery, setSearchQuery] = React.useState("");
   const [isNewEntryDialogOpen, setIsNewEntryDialogOpen] = React.useState(false);
   const [editingEntry, setEditingEntry] = React.useState<DiaryEntry | null>(null);
   const [isMoodDialogOpen, setIsMoodDialogOpen] = React.useState(false);
+  const [detectedEvent, setDetectedEvent] = React.useState<EventRecognitionOutput['event'] | null>(null);
+  const [isEventConfirmOpen, setIsEventConfirmOpen] = React.useState(false);
   const { toast } = useToast();
 
   const sortedEntries = React.useMemo(() => {
     return [...entries].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [entries]);
 
+  const upcomingEvents = React.useMemo(() => {
+    return events
+      .filter(event => new Date(event.date) >= new Date())
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }, [events]);
+
   const filteredEntries = sortedEntries.filter((entry) =>
     entry.content.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const handleAddEntry = (newEntry: Omit<DiaryEntry, "id">) => {
-    const entryWithId = { ...newEntry, id: crypto.randomUUID() };
-    onUpdateEntries([entryWithId, ...entries]);
+  const checkForEvent = async (content: string) => {
+    try {
+      const result = await recognizeEvent({
+        entryContent: content,
+        currentDate: new Date().toISOString(),
+      });
+      if (result.hasEvent && result.event) {
+        setDetectedEvent(result.event);
+        setIsEventConfirmOpen(true);
+      }
+    } catch (error) {
+      console.error("Event recognition failed:", error);
+      toast({ title: "Could not check for events.", variant: "destructive" });
+    }
   };
 
-  const handleUpdateEntry = (updatedEntry: DiaryEntry) => {
+  const handleAddEntry = async (newEntry: Omit<DiaryEntry, "id">) => {
+    const entryWithId = { ...newEntry, id: crypto.randomUUID() };
+    onUpdateEntries([entryWithId, ...entries]);
+    await checkForEvent(newEntry.content);
+  };
+
+  const handleUpdateEntry = async (updatedEntry: DiaryEntry) => {
     onUpdateEntries(
       entries.map((entry) => (entry.id === updatedEntry.id ? updatedEntry : entry))
     );
     setEditingEntry(null);
+    await checkForEvent(updatedEntry.content);
   };
 
   const handleDeleteEntry = (id: string) => {
@@ -54,9 +85,32 @@ export default function DiaryApp({ entries, onUpdateEntries, encryptionKey }: Di
     setIsNewEntryDialogOpen(true);
   };
 
+  const handleSaveEvent = () => {
+    if (detectedEvent) {
+      const newEvent: AppEvent = {
+        id: crypto.randomUUID(),
+        title: detectedEvent.title!,
+        date: detectedEvent.date!,
+      };
+      onUpdateEvents([...events, newEvent]);
+      toast({
+        title: "Event Saved",
+        description: `"${newEvent.title}" has been added to your upcoming events.`,
+      });
+    }
+    setIsEventConfirmOpen(false);
+    setDetectedEvent(null);
+  };
+
+  const handleDeleteEvent = (id: string) => {
+    onUpdateEvents(events.filter(event => event.id !== id));
+  };
+
+
   const handleExport = () => {
     const salt = localStorage.getItem("verdant-vista-salt");
     const data = localStorage.getItem("verdant-vista-data");
+    const eventsData = localStorage.getItem("verdant-vista-events");
 
     if (!salt || !data) {
       toast({
@@ -67,7 +121,7 @@ export default function DiaryApp({ entries, onUpdateEntries, encryptionKey }: Di
       return;
     }
 
-    const backupData = JSON.stringify({ salt, data });
+    const backupData = JSON.stringify({ salt, data, events: eventsData });
     const blob = new Blob([backupData], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -98,6 +152,9 @@ export default function DiaryApp({ entries, onUpdateEntries, encryptionKey }: Di
         if (backup.salt && backup.data) {
           localStorage.setItem("verdant-vista-salt", backup.salt);
           localStorage.setItem("verdant-vista-data", backup.data);
+          if (backup.events) {
+            localStorage.setItem("verdant-vista-events", backup.events);
+          }
           alert("Import successful! The page will now reload. Please unlock your journal with your original password.");
           window.location.reload();
         } else {
@@ -150,6 +207,29 @@ export default function DiaryApp({ entries, onUpdateEntries, encryptionKey }: Di
                     <Sparkles className="mr-2 h-4 w-4 text-accent" /> Mood Retrieval
                 </Button>
             </SidebarGroup>
+            <SidebarSeparator />
+            <SidebarGroup>
+                <h2 className="text-lg font-headline px-2 mb-2 flex items-center gap-2">
+                  <CalendarClock className="h-5 w-5" /> Upcoming Events
+                </h2>
+                {upcomingEvents.length > 0 ? (
+                  <ul className="space-y-2 px-2">
+                    {upcomingEvents.map(event => (
+                      <li key={event.id} className="group flex items-center justify-between text-sm p-2 rounded-md hover:bg-sidebar-accent">
+                        <div>
+                          <p className="font-semibold">{event.title}</p>
+                          <p className="text-xs text-muted-foreground">{format(new Date(event.date), "EEE, MMM d, yyyy 'at' h:mm a")}</p>
+                        </div>
+                        <Button variant="ghost" size="icon" className="h-7 w-7 opacity-0 group-hover:opacity-100" onClick={() => handleDeleteEvent(event.id)}>
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="px-2 text-sm text-muted-foreground">No upcoming events.</p>
+                )}
+            </SidebarGroup>
         </SidebarContent>
         <SidebarFooter>
           <Button variant="outline" className="w-full" onClick={handleExport}>
@@ -196,6 +276,25 @@ export default function DiaryApp({ entries, onUpdateEntries, encryptionKey }: Di
         setIsOpen={setIsMoodDialogOpen}
         entries={entries}
       />
+
+      <AlertDialog open={isEventConfirmOpen} onOpenChange={setIsEventConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2"><CalendarIcon className="h-5 w-5" /> Event Found!</AlertDialogTitle>
+            <AlertDialogDescription>
+              I noticed you mentioned an event. Would you like to save it to your "Upcoming Events" list?
+              <div className="font-semibold text-foreground bg-muted p-3 rounded-md mt-4">
+                <p>{detectedEvent?.title}</p>
+                <p className="text-sm font-normal">{detectedEvent?.date ? format(new Date(detectedEvent.date), "PPPPp") : ''}</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setDetectedEvent(null)}><BellOff className="mr-2"/>No, thanks</AlertDialogCancel>
+            <AlertDialogAction onClick={handleSaveEvent}><Bell className="mr-2" />Yes, save it</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </SidebarProvider>
   );
 }

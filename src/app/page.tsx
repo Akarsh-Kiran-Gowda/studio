@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useToast } from "@/hooks/use-toast";
-import { DiaryEntry, EncryptedData } from "@/types";
+import { DiaryEntry, EncryptedData, AppEvent } from "@/types";
 import { deriveKey, encrypt, decrypt } from "@/lib/crypto";
 import AuthScreen from "@/components/auth-screen";
 import DiaryApp from "@/components/diary-app";
@@ -10,10 +10,12 @@ import { Leaf } from "lucide-react";
 
 const SALT_KEY = "verdant-vista-salt";
 const DATA_KEY = "verdant-vista-data";
+const EVENTS_KEY = "verdant-vista-events";
 
 export default function Home() {
   const [key, setKey] = React.useState<CryptoKey | null>(null);
   const [entries, setEntries] = React.useState<DiaryEntry[]>([]);
+  const [events, setEvents] = React.useState<AppEvent[]>([]);
   const [isUnlocked, setIsUnlocked] = React.useState(false);
   const [loading, setLoading] = React.useState(true);
   const { toast } = useToast();
@@ -42,6 +44,16 @@ export default function Home() {
       } else {
         setEntries([]);
       }
+
+      const encryptedEventsJSON = localStorage.getItem(EVENTS_KEY);
+      if(encryptedEventsJSON) {
+        const encryptedEvents: EncryptedData = JSON.parse(encryptedEventsJSON);
+        const decryptedEvents = await decrypt<AppEvent[]>(derivedKey, encryptedEvents);
+        setEvents(decryptedEvents);
+      } else {
+        setEvents([]);
+      }
+
       setIsUnlocked(true);
     } catch (error) {
       console.error("Login failed:", error);
@@ -87,6 +99,31 @@ export default function Home() {
       });
     }
   };
+  
+  const handleUpdateEvents = async (updatedEvents: AppEvent[]) => {
+    if (!key) {
+      toast({
+        title: "Error",
+        description: "No encryption key available. Please log in again.",
+        variant: "destructive",
+      });
+      setIsUnlocked(false);
+      return;
+    }
+
+    try {
+      setEvents(updatedEvents);
+      const encryptedData = await encrypt(key, updatedEvents);
+      localStorage.setItem(EVENTS_KEY, JSON.stringify(encryptedData));
+    } catch (error) {
+      console.error("Failed to save events:", error);
+      toast({
+        title: "Error",
+        description: "Failed to save your events.",
+        variant: "destructive",
+      });
+    }
+  }
 
   if (loading) {
     return (
@@ -107,6 +144,8 @@ export default function Home() {
     <DiaryApp
       entries={entries}
       onUpdateEntries={handleUpdateEntries}
+      events={events}
+      onUpdateEvents={handleUpdateEvents}
       encryptionKey={key}
     />
   );
