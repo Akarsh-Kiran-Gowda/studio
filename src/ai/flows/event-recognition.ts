@@ -45,7 +45,7 @@ The user is writing in their journal. Your task is to determine if they mention 
 The current date is {{{currentDate}}}. Use this to resolve relative dates (e.g., "tomorrow", "next Friday").
 
 If you find a future event, set hasEvent to true and provide the event title and its full date and time in ISO 8601 format.
-If a date is mentioned but no specific time is provided, default the time to 9:00 AM on that day.
+IMPORTANT: If a date is mentioned but no specific time is provided, you MUST default the time to 9:00 AM on that day. Do not infer any other time.
 If there is no mention of a specific future event, or the event is in the past, set hasEvent to false.
 
 Do not create events for vague plans, past events, or general statements. For example, "I should work out more" is not an event. "My birthday was last week" is a past event. "I have a dentist appointment tomorrow at 3 PM" is a valid future event.
